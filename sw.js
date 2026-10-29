@@ -1,13 +1,13 @@
 /**
- * Catálogo Cliente - Service Worker
- * 100% Offline: Shell, datos base, estilos, CDNs y fotos en caché local.
+ * CatÃ¡logo Cliente - Service Worker
+ * 100% Offline: Shell, datos base, estilos, CDNs y fotos en cachÃ© local.
  */
-const CACHE_NAME = 'cat-cliente-v9-v1.0';
+const CACHE_NAME = 'cat-cliente-generic-v1.4';
 const ASSETS_TO_CACHE = [
   './index.html',
-  './styles.css',
+  './styles.css?v=1.4',
   './config.js',
-  './app.js',
+  './app.js?v=1.4',
   './manifest.json',
   './logo.png',
   './icon-192.png',
@@ -46,7 +46,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // Imágenes: Cache-first
+  // ImÃ¡genes: Cache-first
   if (req.destination === 'image') {
     event.respondWith(
       caches.match(req).then((hit) => {
@@ -83,11 +83,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Scripts, estilos y documentos locales: Cache-first con actualización
+  // Scripts, estilos y documentos locales: Cache-first con actualizaciÃ³n
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) {
-        // En background actualizamos el caché si hay red
+        // En background actualizamos el cachÃ© si hay red
         fetch(req).then((networkRes) => {
           if (networkRes && networkRes.status === 200) {
             caches.open(CACHE_NAME).then((cache) => cache.put(req, networkRes));
