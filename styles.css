@@ -1,0 +1,13 @@
+/* Catálogo cliente: 100% móvil, sin precios */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: contain;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+button { touch-action: manipulation; }
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }
+}
