@@ -14,7 +14,7 @@
 
   <!-- Iconos y estilos -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.4">
+  <link rel="stylesheet" href="styles.css?v=1.9">
 </head>
 <body>
 
@@ -37,6 +37,19 @@
       </button>
     </div>
   </header>
+
+  <!-- Alerta / Cuadrito de actualización de catálogo -->
+  <div id="cc-sync-toast" class="hidden cc-sync-toast" role="status" aria-live="polite">
+    <div class="cc-sync-toast-card">
+      <div class="cc-sync-toast-icon">
+        <i id="cc-sync-icon" class="fa-solid fa-arrows-rotate fa-spin"></i>
+      </div>
+      <div class="cc-sync-toast-text">
+        <b id="cc-sync-title">Estamos actualizando</b>
+        <p id="cc-sync-msg">Espera un momento, estamos guardando el catálogo…</p>
+      </div>
+    </div>
+  </div>
 
   <main class="cc-main">
 
@@ -67,13 +80,21 @@
 
     <!-- Buscador flotante -->
     <div class="cc-search-wrap">
-      <label class="cc-search" for="cc-search">
+      <div class="cc-search">
         <i class="fa-solid fa-magnifying-glass"></i>
-        <input type="text" id="cc-search" oninput="renderGrid()" placeholder="Buscar por nombre o código…" autocomplete="off" aria-label="Buscar producto">
+        <input type="text" id="cc-search" oninput="renderGrid()" placeholder="Buscar por nombre, código o barras…" autocomplete="off" aria-label="Buscar producto">
         <button id="cc-search-clear" type="button" onclick="clearClientSearch()" class="hidden cc-search-clear" aria-label="Limpiar búsqueda">
           <i class="fa-solid fa-xmark"></i>
         </button>
-      </label>
+        <button id="cc-search-scan" type="button" onclick="openBarcodeScanner()" class="cc-search-scan" aria-label="Escanear código de barras con la cámara" title="Escanear código con la cámara">
+          <i class="fa-solid fa-barcode"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Filtro interactivo por categoría -->
+    <div class="cc-categories-bar" id="cc-categories-bar">
+      <div class="cc-categories-track" id="cc-categories-nav"></div>
     </div>
 
     <!-- Catálogo -->
@@ -97,7 +118,7 @@
         <p id="cc-empty-msg">Aún no hay productos publicados.</p>
       </div>
 
-      <div id="cc-grid" class="cc-grid"></div>
+      <div id="cc-grid" class="cc-catalog-flow"></div>
     </section>
   </main>
 
@@ -170,8 +191,53 @@
     </div>
   </div>
 
+  <!-- Modal Escáner de Código de Barras -->
+  <div id="cc-scanner-modal" class="hidden cc-modal cc-scanner-modal" role="dialog" aria-modal="true" aria-labelledby="cc-scanner-title">
+    <div class="cc-scanner-card">
+      <div class="cc-scanner-head">
+        <div class="cc-scanner-title-box">
+          <i class="fa-solid fa-barcode"></i>
+          <div>
+            <h3 id="cc-scanner-title">Escanear código de barras</h3>
+            <p>Apunta la cámara al código de barra o QR</p>
+          </div>
+        </div>
+        <div class="cc-scanner-actions">
+          <button type="button" id="cc-scanner-torch" onclick="toggleScannerTorch()" class="hidden cc-scanner-btn" aria-label="Linterna" title="Encender linterna">
+            <i class="fa-solid fa-bolt"></i>
+          </button>
+          <button type="button" id="cc-scanner-switch" onclick="switchScannerCamera()" class="hidden cc-scanner-btn" aria-label="Cambiar cámara" title="Cambiar cámara">
+            <i class="fa-solid fa-camera-rotate"></i>
+          </button>
+          <button type="button" onclick="closeBarcodeScanner()" class="cc-scanner-btn cc-scanner-btn-close" aria-label="Cerrar escáner">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="cc-scanner-stage">
+        <div id="cc-scanner-viewport" class="cc-scanner-viewport"></div>
+        <div class="cc-scanner-guide" aria-hidden="true">
+          <div class="cc-scanner-laser"></div>
+          <span class="cc-scanner-corner cc-corner-tl"></span>
+          <span class="cc-scanner-corner cc-corner-tr"></span>
+          <span class="cc-scanner-corner cc-corner-bl"></span>
+          <span class="cc-scanner-corner cc-corner-br"></span>
+        </div>
+      </div>
+
+      <div class="cc-scanner-foot">
+        <p id="cc-scanner-status" class="cc-scanner-status">Buscando código de barra...</p>
+        <button type="button" onclick="closeBarcodeScanner()" class="cc-scanner-cancel-btn">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Configuración y lógica de la aplicación -->
   <script src="config.js"></script>
-  <script src="app.js?v=1.4"></script>
+  <script src="html5-qrcode.min.js"></script>
+  <script src="app.js?v=1.9"></script>
 </body>
 </html>

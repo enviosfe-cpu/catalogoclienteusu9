@@ -2,12 +2,29 @@
  * Catálogo Cliente - 100% Offline Engine
  * Carga de datos local-first sin descargas bloqueantes al iniciar.
  */
-const state = { catalog: null, cart: {}, gsUrl: "", vendor: "", isSyncing: false };
+const state = { catalog: null, cart: {}, gsUrl: "", vendor: "", isSyncing: false, selectedCategory: "ALL" };
 
-// Convierte links de vista de Drive (/file/d/.../view) a imagen directa
+function getProductCategory(p) {
+  const name = String(p.categoryName || '').trim();
+  if (name) return name;
+  const code = String(p.category || '').trim();
+  if (code) return 'Categoría ' + code;
+  return 'General';
+}
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Convierte links de vista de Drive (/file/d/.../view) a imagen directa y descarta fotos de prueba
 function directImageUrl(u) {
   const s = String(u || "").trim();
-  if (!s) return s;
+  if (!s || s.includes("unsplash.com") || s.includes("images.unsplash")) return "";
   const m = s.match(/drive\.google\.com\/file\/d\/([^/]+)/)
     || s.match(/drive\.google\.com\/open\?.*[?&]id=([^&]+)/)
     || s.match(/drive\.google\.com\/uc\?.*[?&]id=([^&]+)/);
@@ -19,7 +36,10 @@ function directImageUrl(u) {
 function normalizeCatalogImages(cat) {
   if (!cat) return;
   if (cat.company && cat.company.logo) cat.company.logo = directImageUrl(cat.company.logo);
-  (cat.products || []).forEach(p => { if (p.image) p.image = directImageUrl(p.image); });
+  (cat.products || []).forEach(p => {
+    if (p.image) p.image = directImageUrl(p.image);
+    p.barcode = String(p.barcode || p.det_codbar || '').trim();
+  });
   if (cat.offer && cat.offer.image) {
     cat.offer.image = String(cat.offer.image).split(/[,\n]+/).map(s => directImageUrl(s.trim())).filter(Boolean).join(',');
   }
@@ -69,6 +89,59 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 });
 
+let syncToastTimer = null;
+
+function showSyncToast(title, msg, spinning = true) {
+  const toast = document.getElementById('cc-sync-toast');
+  const titleEl = document.getElementById('cc-sync-title');
+  const msgEl = document.getElementById('cc-sync-msg');
+  const icon = document.getElementById('cc-sync-icon');
+  const iconWrap = icon?.parentElement;
+  if (!toast) return;
+
+  if (syncToastTimer) {
+    clearTimeout(syncToastTimer);
+    syncToastTimer = null;
+  }
+
+  if (titleEl) titleEl.textContent = title;
+  if (msgEl) msgEl.textContent = msg;
+
+  if (icon && iconWrap) {
+    iconWrap.className = 'cc-sync-toast-icon';
+    if (spinning) {
+      icon.className = 'fa-solid fa-arrows-rotate fa-spin';
+    } else {
+      icon.className = 'fa-solid fa-circle-check';
+      iconWrap.classList.add('is-success');
+    }
+  }
+
+  toast.classList.remove('hidden', 'is-leaving');
+}
+
+function hideSyncToast(delay = 0) {
+  const toast = document.getElementById('cc-sync-toast');
+  if (!toast) return;
+
+  if (syncToastTimer) {
+    clearTimeout(syncToastTimer);
+    syncToastTimer = null;
+  }
+
+  if (delay > 0) {
+    syncToastTimer = setTimeout(() => {
+      toast.classList.add('is-leaving');
+      syncToastTimer = setTimeout(() => {
+        toast.classList.add('hidden');
+        toast.classList.remove('is-leaving');
+      }, 250);
+    }, delay);
+  } else {
+    toast.classList.add('hidden');
+  }
+}
+
 /**
  * Carga Local-First: lee únicamente del almacenamiento local guardado.
  */
@@ -100,12 +173,10 @@ function loadCatalogOfflineFirst() {
     return true;
   }
 
-  // Si no hay datos en caché, mostrar estado vacío / cargando según corresponda
-  if (empty) {
-    const msg = document.getElementById('cc-empty-msg');
-    if (msg) msg.textContent = "No hay productos disponibles en caché local. Conéctate para sincronizar.";
-    empty.classList.remove('hidden');
-  }
+  // Si no hay datos en caché o se limpió la caché: mostrar el cuadrito de actualización
+  showSyncToast("Estamos actualizando", "Espera un momento, estamos preparando el catálogo…", true);
+  if (loading) loading.classList.remove('hidden');
+  if (empty) empty.classList.add('hidden');
   return false;
 }
 
@@ -134,6 +205,11 @@ async function syncCatalogInBackground() {
     renderGrid();
     updateCartBadge();
     maybeOffer();
+
+    // Cuando termina de cargar y guardar la caché, avisar y quitar el cuadrito
+    showSyncToast("¡Catálogo listo!", "Productos cargados y guardados en este equipo.", false);
+    hideSyncToast(1200);
+
   } catch (e) {
     // Si falla en background o no hay internet, no pasa nada porque ya tenemos datos offline
     console.log("Catálogo en modo local / offline:", e.message || e);
@@ -142,6 +218,9 @@ async function syncCatalogInBackground() {
       const msg = document.getElementById('cc-empty-msg');
       if (msg) msg.textContent = "Catálogo listo para operar offline. Conéctate una vez si requieres actualizar.";
       document.getElementById('cc-empty')?.classList.remove('hidden');
+      hideSyncToast(0);
+    } else {
+      hideSyncToast(0);
     }
   } finally {
     state.isSyncing = false;
@@ -161,6 +240,7 @@ async function refreshCatalogManually() {
     return;
   }
 
+  showSyncToast("Estamos actualizando", "Descargando la última versión del catálogo…", true);
   try {
     await syncCatalogInBackground();
   } finally {
@@ -286,6 +366,103 @@ function clearClientSearch() {
   renderGrid();
 }
 
+function renderCategoryChips(allProducts, searchQuery) {
+  const container = document.getElementById('cc-categories-nav') || document.getElementById('cc-suppliers-nav');
+  if (!container) return;
+
+  const filtered = (allProducts || []).filter(p => {
+    if (!searchQuery) return true;
+    const nameMatch = normStr(p.name).includes(searchQuery);
+    const codeMatch = normStr(p.code).includes(searchQuery);
+    const barcodeMatch = normStr(p.barcode || p.det_codbar).includes(searchQuery);
+    const catMatch = normStr(p.categoryName || p.category).includes(searchQuery);
+    const supMatch = normStr(p.supplierName || p.supplier).includes(searchQuery);
+    return nameMatch || codeMatch || barcodeMatch || catMatch || supMatch;
+  });
+
+  const counts = {};
+  filtered.forEach(p => {
+    const c = getProductCategory(p);
+    counts[c] = (counts[c] || 0) + 1;
+  });
+
+  const categoriesList = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  const totalCount = filtered.length;
+
+  if (state.selectedCategory !== 'ALL' && !counts[state.selectedCategory]) {
+    state.selectedCategory = 'ALL';
+  }
+
+  let html = `
+    <button type="button" onclick="selectCategory('ALL')" class="cc-chip ${state.selectedCategory === 'ALL' ? 'active' : ''}">
+      <span>Todas</span>
+      <span class="cc-chip-count">${totalCount}</span>
+    </button>
+  `;
+
+  categoriesList.forEach(cat => {
+    const isAct = state.selectedCategory === cat;
+    html += `
+      <button type="button" onclick="selectCategory('${cat.replace(/'/g, "\\'")}')" class="cc-chip ${isAct ? 'active' : ''}">
+        <span>${escapeHtml(cat)}</span>
+        <span class="cc-chip-count">${counts[cat]}</span>
+      </button>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function selectCategory(cat) {
+  state.selectedCategory = cat;
+  renderGrid();
+  const activeBtn = document.querySelector('.cc-chip.active');
+  if (activeBtn) {
+    activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
+}
+
+function renderCard(p, i) {
+  const qty = state.cart[p.code] || 0;
+  const sub = getProductCategory(p);
+  const image = p.image
+    ? `<img src="${p.image}" alt="${p.name}" loading="lazy" onerror="this.style.display='none';this.parentElement.querySelector('.cc-card-fallback').style.display='grid'">`
+    : '';
+  const fallbackStyle = p.image ? ' style="display:none"' : '';
+  return `
+  <article class="cc-card" style="--d:${Math.min(i * 28, 220)}ms">
+    <div class="cc-card-media">
+      ${image}
+      <span class="cc-card-fallback"${fallbackStyle}><i class="fa-solid fa-box"></i></span>
+      <span class="cc-code">#${p.code}</span>
+    </div>
+    <div class="cc-card-body">
+      ${p.barcode ? `
+        <div class="cc-card-barcode" title="Código de barras: ${p.barcode}">
+          <i class="fa-solid fa-barcode" aria-hidden="true"></i>
+          <span>${p.barcode}</span>
+        </div>
+      ` : ''}
+      <h3>${p.name}</h3>
+      ${sub ? `<div class="cc-card-meta">${escapeHtml(sub)}</div>` : ''}
+      <div class="cc-card-foot">
+        ${qty > 0 ? `
+        <div class="cc-qty">
+          <span class="cc-qty-label">En consulta</span>
+          <div class="cc-qty-controls">
+            <button onclick="changeQty('${p.code}', -1)" aria-label="Quitar una unidad">−</button>
+            <span>${qty}</span>
+            <button onclick="changeQty('${p.code}', 1)" aria-label="Agregar una unidad">+</button>
+          </div>
+        </div>` : `
+        <button class="cc-card-add" onclick="changeQty('${p.code}', 1)" aria-label="Agregar producto">
+          <span>Agregar</span><i class="fa-solid fa-plus"></i>
+        </button>`}
+      </div>
+    </div>
+  </article>`;
+}
+
 function renderGrid() {
   const grid = document.getElementById('cc-grid');
   const empty = document.getElementById('cc-empty');
@@ -301,13 +478,25 @@ function renderGrid() {
   }
 
   const q = normStr(rawQ);
-  const items = (state.catalog.products || []).filter(p => {
-    if (!q) return true;
-    const nameMatch = normStr(p.name).includes(q);
-    const codeMatch = normStr(p.code).includes(q);
-    const catMatch = normStr(p.categoryName || p.category).includes(q);
-    const supMatch = normStr(p.supplierName || p.supplier).includes(q);
-    return nameMatch || codeMatch || catMatch || supMatch;
+  const allProducts = state.catalog.products || [];
+
+  // Actualizar chips de categorías con conteos en tiempo real
+  renderCategoryChips(allProducts, q);
+
+  // Filtrar productos por búsqueda y por categoría seleccionada
+  const items = allProducts.filter(p => {
+    if (q) {
+      const nameMatch = normStr(p.name).includes(q);
+      const codeMatch = normStr(p.code).includes(q);
+      const barcodeMatch = normStr(p.barcode || p.det_codbar).includes(q);
+      const catMatch = normStr(p.categoryName || p.category).includes(q);
+      const supMatch = normStr(p.supplierName || p.supplier).includes(q);
+      if (!nameMatch && !codeMatch && !barcodeMatch && !catMatch && !supMatch) return false;
+    }
+    if (state.selectedCategory !== 'ALL') {
+      if (getProductCategory(p) !== state.selectedCategory) return false;
+    }
+    return true;
   });
 
   if (count) count.textContent = `${items.length} producto${items.length === 1 ? '' : 's'}`;
@@ -315,48 +504,49 @@ function renderGrid() {
   if (!items.length) {
     grid.innerHTML = '';
     if (emptyMsg) {
-      emptyMsg.textContent = rawQ
-        ? `No encontramos productos para “${rawQ}”.`
-        : 'Aún no hay productos publicados.';
+      if (rawQ && state.selectedCategory !== 'ALL') {
+        emptyMsg.textContent = `No hay productos de “${state.selectedCategory}” que coincidan con “${rawQ}”.`;
+      } else if (rawQ) {
+        emptyMsg.textContent = `No encontramos productos para “${rawQ}”.`;
+      } else if (state.selectedCategory !== 'ALL') {
+        emptyMsg.textContent = `No hay productos disponibles en “${state.selectedCategory}”.`;
+      } else {
+        emptyMsg.textContent = 'Aún no hay productos publicados.';
+      }
     }
     if (empty) empty.classList.remove('hidden');
     return;
   }
   if (empty) empty.classList.add('hidden');
-  grid.innerHTML = items.map((p, i) => {
-    const qty = state.cart[p.code] || 0;
-    const sub = [p.supplierName || p.supplier, p.categoryName || p.category].filter(Boolean).join(' · ');
-    const image = p.image
-      ? `<img src="${p.image}" alt="${p.name}" loading="lazy" onerror="this.style.display='none';this.parentElement.querySelector('.cc-card-fallback').style.display='grid'">`
-      : '';
-    const fallbackStyle = p.image ? ' style="display:none"' : '';
-    return `
-    <article class="cc-card" style="--d:${Math.min(i * 28, 220)}ms">
-      <div class="cc-card-media">
-        ${image}
-        <span class="cc-card-fallback"${fallbackStyle}><i class="fa-solid fa-box"></i></span>
-        <span class="cc-code">#${p.code}</span>
-      </div>
-      <div class="cc-card-body">
-        <h3>${p.name}</h3>
-        ${sub ? `<div class="cc-card-meta">${sub}</div>` : ''}
-        <div class="cc-card-foot">
-          ${qty > 0 ? `
-          <div class="cc-qty">
-            <span class="cc-qty-label">En consulta</span>
-            <div class="cc-qty-controls">
-              <button onclick="changeQty('${p.code}', -1)" aria-label="Quitar una unidad">−</button>
-              <span>${qty}</span>
-              <button onclick="changeQty('${p.code}', 1)" aria-label="Agregar una unidad">+</button>
+
+  // Si se seleccionó una categoría específica: mostrar encabezado y su cuadrícula
+  if (state.selectedCategory !== 'ALL') {
+    grid.innerHTML = `
+      <section class="cc-category-block cc-supplier-block">
+        <div class="cc-category-header cc-supplier-header">
+          <div class="cc-category-info cc-supplier-info">
+            <span class="cc-category-badge cc-supplier-badge"><i class="fa-solid fa-layer-group"></i></span>
+            <div>
+              <h3 class="cc-category-title cc-supplier-title">${escapeHtml(state.selectedCategory)}</h3>
+              <p class="cc-category-sub cc-supplier-sub">Categoría seleccionada</p>
             </div>
-          </div>` : `
-          <button class="cc-card-add" onclick="changeQty('${p.code}', 1)" aria-label="Agregar producto">
-            <span>Agregar</span><i class="fa-solid fa-plus"></i>
-          </button>`}
+          </div>
+          <span class="cc-category-count cc-supplier-count">${items.length} producto${items.length === 1 ? '' : 's'}</span>
         </div>
-      </div>
-    </article>`;
-  }).join('');
+        <div class="cc-grid">
+          ${items.map((p, i) => renderCard(p, i)).join('')}
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  // Cuando está en "Todas": mostrar directamente la cuadrícula general limpia sin cabecera de categoría
+  grid.innerHTML = `
+    <div class="cc-grid">
+      ${items.map((p, i) => renderCard(p, i)).join('')}
+    </div>
+  `;
 }
 
 function changeQty(code, delta) {
@@ -427,7 +617,7 @@ function renderCart() {
       </div>
       <div class="cc-cart-info">
         <b>${p.name}</b>
-        <span>#${p.code}</span>
+        <span>#${p.code}${p.barcode ? ` · <i class="fa-solid fa-barcode"></i> ${p.barcode}` : ''}</span>
       </div>
       <div class="cc-cart-qty">
         <button onclick="changeQty('${p.code}', -1);renderCart()" aria-label="Quitar una unidad">−</button>
@@ -447,7 +637,7 @@ function sendOrder() {
   const prods = state.catalog.products || [];
   const lines = Object.keys(state.cart).map(code => {
     const p = prods.find(x => String(x.code) === String(code));
-    return p ? `• ${state.cart[code]} x ${p.name} (#${p.code})` : null;
+    return p ? `• ${state.cart[code]} x ${p.name} (#${p.code}${p.barcode ? ` · Barra: ${p.barcode}` : ''})` : null;
   }).filter(Boolean);
   if (!lines.length) {
     alert("Agrega productos antes de enviar.");
@@ -546,4 +736,167 @@ function closeOffer() {
   const modal = document.getElementById('cc-offer');
   if (modal) modal.classList.add('hidden');
   document.body.style.overflow = '';
+}
+
+/**
+ * Escáner de Código de Barras (Cámara + Detección automática para Catálogo Cliente)
+ */
+let clientBarcodeScanner = null;
+let clientScannerCameras = [];
+let clientCurrentCameraIdx = 0;
+let clientIsTorchOn = false;
+
+function playClientScannerBeep() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  } catch (e) {}
+}
+
+async function openBarcodeScanner() {
+  const modal = document.getElementById('cc-scanner-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+
+  const statusEl = document.getElementById('cc-scanner-status');
+  if (statusEl) statusEl.textContent = 'Iniciando cámara...';
+
+  if (typeof Html5Qrcode === 'undefined') {
+    if (statusEl) statusEl.textContent = 'Módulo de cámara listo.';
+  }
+
+  try {
+    if (!clientBarcodeScanner) {
+      clientBarcodeScanner = new Html5Qrcode("cc-scanner-viewport", {
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true
+        }
+      });
+    }
+
+    try {
+      clientScannerCameras = await Html5Qrcode.getCameras();
+    } catch (e) {
+      clientScannerCameras = [];
+    }
+
+    const switchBtn = document.getElementById('cc-scanner-switch');
+    if (switchBtn) {
+      switchBtn.classList.toggle('hidden', clientScannerCameras.length <= 1);
+    }
+
+    const config = {
+      fps: 15,
+      qrbox: { width: 260, height: 160 },
+      aspectRatio: 1.0
+    };
+
+    const cameraConfig = clientScannerCameras.length > 0
+      ? { deviceId: { exact: clientScannerCameras[clientCurrentCameraIdx].id } }
+      : { facingMode: "environment" };
+
+    await clientBarcodeScanner.start(
+      cameraConfig,
+      config,
+      onClientBarcodeScanned,
+      onClientBarcodeScanError
+    );
+
+    if (statusEl) statusEl.textContent = 'Apunta la cámara al código de barra';
+
+    const torchBtn = document.getElementById('cc-scanner-torch');
+    if (torchBtn) {
+      try {
+        const capabilities = clientBarcodeScanner.getRunningTrackCapabilities?.();
+        torchBtn.classList.toggle('hidden', !capabilities?.torch);
+      } catch (e) {
+        torchBtn.classList.add('hidden');
+      }
+    }
+
+  } catch (err) {
+    console.error("Error al iniciar escáner cliente:", err);
+    if (statusEl) {
+      statusEl.textContent = 'No se pudo acceder a la cámara. Revisa los permisos.';
+    }
+  }
+}
+
+function onClientBarcodeScanned(decodedText) {
+  const code = String(decodedText || '').trim();
+  if (!code) return;
+
+  playClientScannerBeep();
+  if (navigator.vibrate) {
+    try { navigator.vibrate([60, 40, 60]); } catch (e) {}
+  }
+
+  closeBarcodeScanner();
+
+  const searchInput = document.getElementById('cc-search');
+  if (searchInput) {
+    searchInput.value = code;
+    renderGrid();
+    searchInput.focus();
+    searchInput.select();
+  }
+
+  const gridSection = document.getElementById('cc-grid-section');
+  if (gridSection) {
+    gridSection.scrollIntoView({ behavior: 'smooth' });
+  }
+}
+
+function onClientBarcodeScanError() {
+  // Búsqueda frame a frame
+}
+
+async function closeBarcodeScanner() {
+  const modal = document.getElementById('cc-scanner-modal');
+  if (modal) modal.classList.add('hidden');
+  document.body.style.overflow = '';
+
+  if (clientBarcodeScanner) {
+    try {
+      if (clientBarcodeScanner.isScanning) {
+        await clientBarcodeScanner.stop();
+      }
+    } catch (e) {}
+  }
+  clientIsTorchOn = false;
+  const torchBtn = document.getElementById('cc-scanner-torch');
+  if (torchBtn) torchBtn.classList.remove('is-active');
+}
+
+async function toggleScannerTorch() {
+  if (!clientBarcodeScanner || !clientBarcodeScanner.isScanning) return;
+  try {
+    clientIsTorchOn = !clientIsTorchOn;
+    await clientBarcodeScanner.applyVideoConstraints({
+      advanced: [{ torch: clientIsTorchOn }]
+    });
+    const torchBtn = document.getElementById('cc-scanner-torch');
+    if (torchBtn) torchBtn.classList.toggle('is-active', clientIsTorchOn);
+  } catch (e) {
+    console.warn("Torch no soportado:", e);
+  }
+}
+
+async function switchScannerCamera() {
+  if (clientScannerCameras.length <= 1 || !clientBarcodeScanner) return;
+  clientCurrentCameraIdx = (clientCurrentCameraIdx + 1) % clientScannerCameras.length;
+  await closeBarcodeScanner();
+  await openBarcodeScanner();
 }

@@ -2,12 +2,13 @@
  * CatÃ¡logo Cliente - Service Worker
  * 100% Offline: Shell, datos base, estilos, CDNs y fotos en cachÃ© local.
  */
-const CACHE_NAME = 'cat-cliente-generic-v1.4';
+const CACHE_NAME = 'cat-cliente-generic-v1.9';
 const ASSETS_TO_CACHE = [
   './index.html',
-  './styles.css?v=1.4',
+  './styles.css?v=1.9',
   './config.js',
-  './app.js?v=1.4',
+  './html5-qrcode.min.js',
+  './app.js?v=1.9',
   './manifest.json',
   './logo.png',
   './icon-192.png',
